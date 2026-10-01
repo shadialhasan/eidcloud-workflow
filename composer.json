@@ -1,0 +1,29 @@
+{
+  "name": "eidcloud/workflow",
+  "description": "Declarative JSON/YAML workflow automation engine with state machine checkpointing and step branching in pure PHP",
+  "type": "library",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "MHD. Shadi AL-Hasan",
+      "email": "shadi@eidcloud.com",
+      "role": "Lead Architect & Maintainer"
+    }
+  ],
+  "require": {
+    "php": ">=8.2"
+  },
+  "autoload": {
+    "psr-4": {
+      "EidCloud\\Workflow\\": "src/"
+    }
+  },
+  "bin": [
+    "bin/eidcloud-flow"
+  ],
+  "scripts": {
+    "test": "php tests/run_tests.php"
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

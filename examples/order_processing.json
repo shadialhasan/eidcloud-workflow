@@ -1,0 +1,93 @@
+{
+  "id": "order_processing",
+  "name": "E-Commerce Order Processing Pipeline",
+  "description": "Validates customer orders, applies member discounts, processes database storage, and drafts notification email.",
+  "version": "1.0.0",
+  "steps": [
+    {
+      "id": "fetch_user",
+      "type": "http",
+      "config": {
+        "url": "https://api.example.com/users/{{input.userId ?? 42}}",
+        "method": "GET",
+        "mock_response": {
+          "id": 42,
+          "name": "Sarah Connor",
+          "email": "sarah@eidcloud.com",
+          "tier": "vip"
+        }
+      }
+    },
+    {
+      "id": "check_vip",
+      "type": "condition",
+      "config": {
+        "condition": {
+          "field": "{{steps.fetch_user.tier}}",
+          "operator": "==",
+          "value": "vip"
+        },
+        "then": "apply_vip_discount",
+        "else": "apply_standard_rate"
+      }
+    },
+    {
+      "id": "apply_vip_discount",
+      "type": "transform",
+      "config": {
+        "operation": "map",
+        "mapping": {
+          "orderId": "{{input.orderId ?? 'ORD-1001'}}",
+          "customerEmail": "{{steps.fetch_user.email}}",
+          "originalAmount": "{{input.amount ?? 100}}",
+          "discountPercent": 20,
+          "finalAmount": 80.0,
+          "tierApplied": "vip"
+        }
+      }
+    },
+    {
+      "id": "apply_standard_rate",
+      "type": "transform",
+      "config": {
+        "operation": "map",
+        "mapping": {
+          "orderId": "{{input.orderId ?? 'ORD-1001'}}",
+          "customerEmail": "{{steps.fetch_user.email}}",
+          "originalAmount": "{{input.amount ?? 100}}",
+          "discountPercent": 0,
+          "finalAmount": "{{input.amount ?? 100}}",
+          "tierApplied": "standard"
+        }
+      }
+    },
+    {
+      "id": "record_order_db",
+      "type": "database",
+      "config": {
+        "dsn": "sqlite::memory:",
+        "query": "CREATE TABLE IF NOT EXISTS orders (order_id TEXT, email TEXT, total REAL); INSERT INTO orders VALUES (:order_id, :email, :total);",
+        "params": {
+          ":order_id": "{{steps.apply_vip_discount.orderId ?? steps.apply_standard_rate.orderId}}",
+          ":email": "{{steps.fetch_user.email}}",
+          ":total": "{{steps.apply_vip_discount.finalAmount ?? steps.apply_standard_rate.finalAmount}}"
+        },
+        "mock_rows": [
+          { "order_id": "ORD-1001", "status": "recorded" }
+        ]
+      }
+    },
+    {
+      "id": "ai_generate_summary",
+      "type": "ai",
+      "config": {
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "prompt": "Compose a brief receipt greeting for customer {{steps.fetch_user.name}} with final amount {{steps.apply_vip_discount.finalAmount ?? steps.apply_standard_rate.finalAmount}}",
+        "mock_response": {
+          "text": "Dear Sarah Connor, thank you for your order! Your VIP discounted total is $80.00."
+        }
+      }
+    }
+  ]
+}

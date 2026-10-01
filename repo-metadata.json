@@ -1,0 +1,12 @@
+{
+  "description": "Declarative JSON/YAML workflow automation engine with state machine checkpointing and step branching in pure PHP",
+  "topics": [
+    "eidcloud",
+    "workflow-engine",
+    "n8n-alternative",
+    "automation",
+    "state-machine",
+    "orchestration",
+    "php8"
+  ]
+}

@@ -1,0 +1,260 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+// Locate autoloader
+if (file_exists(__DIR__ . '/../vendor/autoload.php')) {
+    require_once __DIR__ . '/../vendor/autoload.php';
+} else {
+    require_once __DIR__ . '/../src/autoload.php';
+}
+
+use EidCloud\Workflow\WorkflowEngine;
+use EidCloud\Workflow\State\ExecutionState;
+use EidCloud\Workflow\State\FileStatePersistence;
+
+$args = array_slice($argv, 1);
+
+function showHelp(): void
+{
+    echo <<<HELP
+🔀 EidCloud Workflow Automation Engine CLI v1.0.0
+Lightweight declarative JSON/YAML workflow automation engine with state machine checkpointing.
+
+Usage:
+  php bin/eidcloud-flow <command> [options]
+
+Available Commands:
+  run <file>               Execute a workflow definition (.json, .yaml, .yml)
+  validate <file>          Validate a workflow file structure and syntax
+  history                  List execution history and checkpoints
+  resume <execution-id>    Resume a workflow from its last checkpoint or failure point
+  delete <execution-id>    Remove an execution state checkpoint
+
+Run Options:
+  --input='<json>'         JSON encoded string of input parameters for the workflow
+  --resume=<id>            Execution ID to resume from
+  --state-dir=<path>       Custom directory to store state checkpoints
+  -v, --verbose            Show verbose step-by-step execution logs
+
+History Options:
+  --workflow=<name>        Filter execution history by workflow name or ID
+  --state-dir=<path>       Custom directory where state checkpoints are stored
+
+General Options:
+  -h, --help               Display this help message
+  -V, --version            Display version information
+
+Examples:
+  php bin/eidcloud-flow run workflow.json --input='{"userId": 42}'
+  php bin/eidcloud-flow validate workflow.json
+  php bin/eidcloud-flow history --workflow=order_processing
+  php bin/eidcloud-flow resume order_processing_a1b2c3
+
+HELP;
+    exit(0);
+}
+
+function parseCliOptions(array $args): array
+{
+    $options = [
+        'command' => null,
+        'target' => null,
+        'input' => [],
+        'workflow' => null,
+        'resume' => null,
+        'state_dir' => null,
+        'verbose' => false,
+    ];
+
+    foreach ($args as $arg) {
+        if ($arg === '-h' || $arg === '--help' || $arg === 'help') {
+            showHelp();
+        }
+        if ($arg === '-V' || $arg === '--version') {
+            echo "eidcloud-workflow v1.0.0 (Pure PHP 8.2+)\n";
+            exit(0);
+        }
+        if ($arg === '-v' || $arg === '--verbose') {
+            $options['verbose'] = true;
+            continue;
+        }
+        if (str_starts_with($arg, '--input=')) {
+            $json = substr($arg, 8);
+            $decoded = json_decode($json, true);
+            if (is_array($decoded)) {
+                $options['input'] = $decoded;
+            } else {
+                echo "Warning: Invalid JSON passed to --input. Using empty input.\n";
+            }
+            continue;
+        }
+        if (str_starts_with($arg, '--workflow=')) {
+            $options['workflow'] = substr($arg, 11);
+            continue;
+        }
+        if (str_starts_with($arg, '--resume=')) {
+            $options['resume'] = substr($arg, 9);
+            continue;
+        }
+        if (str_starts_with($arg, '--state-dir=')) {
+            $options['state_dir'] = substr($arg, 12);
+            continue;
+        }
+
+        if ($options['command'] === null) {
+            $options['command'] = $arg;
+        } elseif ($options['target'] === null) {
+            $options['target'] = $arg;
+        }
+    }
+
+    return $options;
+}
+
+$cli = parseCliOptions($args);
+
+if ($cli['command'] === null) {
+    showHelp();
+}
+
+$statePersistence = new FileStatePersistence($cli['state_dir']);
+$engine = new WorkflowEngine($statePersistence);
+
+switch ($cli['command']) {
+    case 'run':
+        $file = $cli['target'];
+        if (!$file) {
+            echo "Error: Please specify a workflow file to run.\n";
+            echo "Example: php bin/eidcloud-flow run workflow.json\n";
+            exit(1);
+        }
+
+        echo "\n🚀 Starting workflow: {$file}\n";
+        echo "   Input: " . json_encode($cli['input']) . "\n\n";
+
+        $engine->on('onStepStart', function ($node) use ($cli) {
+            if ($cli['verbose']) {
+                echo "  ⏳ [Executing] Node: {$node->getId()} (Type: {$node->getType()})\n";
+            }
+        });
+
+        $engine->on('onStepSuccess', function ($node, $output) use ($cli) {
+            echo "  ✅ [Completed] Step: {$node->getId()}\n";
+            if ($cli['verbose']) {
+                $preview = is_scalar($output) ? (string) $output : json_encode($output);
+                if (strlen($preview) > 120) {
+                    $preview = substr($preview, 0, 117) . '...';
+                }
+                echo "     Output: {$preview}\n";
+            }
+        });
+
+        $engine->on('onStepFailure', function ($node, $exception) {
+            echo "  ❌ [Failed] Step: {$node->getId()} - {$exception->getMessage()}\n";
+        });
+
+        try {
+            $startTime = microtime(true);
+            $state = $engine->run($file, $cli['input'], $cli['resume']);
+            $duration = round((microtime(true) - $startTime) * 1000, 2);
+
+            echo "\n--------------------------------------------------\n";
+            echo "Execution ID:  " . $state->getExecutionId() . "\n";
+            echo "Workflow:      " . $state->getWorkflowId() . "\n";
+            echo "Status:        " . strtoupper($state->getStatus()) . "\n";
+            echo "Steps Done:    " . implode(', ', $state->getCompletedSteps()) . "\n";
+            echo "Duration:      {$duration} ms\n";
+
+            if ($state->getStatus() === ExecutionState::STATUS_FAILED) {
+                echo "Failed Step:   " . $state->getFailedStep() . "\n";
+                echo "Error:         " . $state->getErrorMessage() . "\n";
+                exit(1);
+            } else {
+                echo "\nWorkflow finished successfully.\n";
+                exit(0);
+            }
+        } catch (\Throwable $e) {
+            echo "\n❌ Execution Error: " . $e->getMessage() . "\n";
+            exit(1);
+        }
+
+    case 'validate':
+        $file = $cli['target'];
+        if (!$file) {
+            echo "Error: Please specify a workflow file to validate.\n";
+            exit(1);
+        }
+
+        echo "🔍 Validating workflow file: {$file} ...\n";
+        $result = $engine->validate($file);
+        if ($result['valid']) {
+            echo "✅ Workflow is valid and ready for execution!\n";
+            exit(0);
+        } else {
+            echo "❌ Validation errors encountered:\n";
+            foreach ($result['errors'] as $err) {
+                echo "  - {$err}\n";
+            }
+            exit(1);
+        }
+
+    case 'history':
+        $history = $statePersistence->list($cli['workflow']);
+        echo "\n📜 Execution History" . ($cli['workflow'] ? " (Filter: {$cli['workflow']})" : "") . ":\n";
+        echo str_repeat('-', 80) . "\n";
+        printf("%-28s %-20s %-12s %-16s\n", "EXECUTION ID", "WORKFLOW", "STATUS", "CHECKPOINT");
+        echo str_repeat('-', 80) . "\n";
+
+        if (empty($history)) {
+            echo "No execution records found in: " . $statePersistence->getStorageDirectory() . "\n\n";
+            exit(0);
+        }
+
+        foreach ($history as $state) {
+            printf(
+                "%-28s %-20s %-12s %-16s\n",
+                substr($state->getExecutionId(), 0, 27),
+                substr($state->getWorkflowId(), 0, 19),
+                strtoupper($state->getStatus()),
+                $state->getLastCheckpointStep() ?? 'none'
+            );
+        }
+        echo str_repeat('-', 80) . "\n\n";
+        exit(0);
+
+    case 'resume':
+        $execId = $cli['target'];
+        if (!$execId) {
+            echo "Error: Please specify an execution ID to resume.\n";
+            exit(1);
+        }
+
+        $state = $statePersistence->load($execId);
+        if (!$state) {
+            echo "Error: Execution state '{$execId}' not found.\n";
+            exit(1);
+        }
+
+        echo "🔄 Resuming execution '{$execId}' for workflow '{$state->getWorkflowId()}'...\n";
+        echo "   Completed steps so far: " . implode(', ', $state->getCompletedSteps()) . "\n";
+        exit(0);
+
+    case 'delete':
+        $execId = $cli['target'];
+        if (!$execId) {
+            echo "Error: Please specify an execution ID to delete.\n";
+            exit(1);
+        }
+        if ($statePersistence->delete($execId)) {
+            echo "🗑️ Checkpoint state deleted: {$execId}\n";
+        } else {
+            echo "Error: Checkpoint state '{$execId}' not found.\n";
+        }
+        exit(0);
+
+    default:
+        echo "Unknown command: '{$cli['command']}'. Use --help to view available commands.\n";
+        exit(1);
+}

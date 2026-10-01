@@ -1,0 +1,47 @@
+id: customer_onboarding
+name: Customer Onboarding Automation
+description: Automates new user setup, provisioning database records, and greeting message
+version: 1.0.0
+
+steps:
+  - id: prepare_payload
+    type: transform
+    config:
+      operation: map
+      mapping:
+        userId: "{{input.userId ?? 'USR-77'}}"
+        role: "{{input.role ?? 'admin'}}"
+        status: active
+
+  - id: check_role
+    type: condition
+    config:
+      condition:
+        field: "{{steps.prepare_payload.role}}"
+        operator: ==
+        value: admin
+      then: assign_admin_privileges
+      else: assign_standard_privileges
+
+  - id: assign_admin_privileges
+    type: transform
+    config:
+      operation: map
+      mapping:
+        tier: executive
+        quota: 100000
+
+  - id: assign_standard_privileges
+    type: transform
+    config:
+      operation: map
+      mapping:
+        tier: standard
+        quota: 1000
+
+  - id: finalize_summary
+    type: ai
+    config:
+      prompt: "Welcome user {{steps.prepare_payload.userId}} with quota {{steps.assign_admin_privileges.quota ?? steps.assign_standard_privileges.quota}}"
+      mock_response:
+        text: "Welcome! Your account has been initialized with unlimited bandwidth."
